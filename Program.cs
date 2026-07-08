@@ -135,6 +135,7 @@ internal sealed class TickerForm : Form
     private IReadOnlyList<LiveNewsItem> _items = [];
     private string _tickerText = string.Empty;
     private Size _tickerSize = Size.Empty;
+    private bool _tickerTextIsNews;
     private int _currentPageIndex;
     private int _taskbarLeftOffset;
     private int _taskbarRightOffset;
@@ -232,7 +233,7 @@ internal sealed class TickerForm : Form
             ? TextRenderingHint.ClearTypeGridFit
             : TextRenderingHint.ClearTypeGridFit;
         using var shadowBrush = new SolidBrush(Color.FromArgb(170, 0, 0, 0));
-        using var textBrush = new SolidBrush(Color.White);
+        using var textBrush = new SolidBrush(GetTickerTextColor());
 
         if (_isTaskbarHosted)
         {
@@ -666,9 +667,10 @@ internal sealed class TickerForm : Form
         }
     }
 
-    private void SetTickerText(string text)
+    private void SetTickerText(string text, bool isNewsText = false)
     {
         _tickerText = text;
+        _tickerTextIsNews = isNewsText;
         using var graphics = CreateGraphics();
         _tickerSize = Size.Ceiling(graphics.MeasureString(_tickerText, _tickerFont));
         RestartScroll();
@@ -679,7 +681,7 @@ internal sealed class TickerForm : Form
     {
         _items = items;
         _currentPageIndex = Math.Clamp(_currentPageIndex, 0, Math.Max(0, _items.Count - 1));
-        SetTickerText(FormatTicker(items));
+        SetTickerText(FormatTicker(items), isNewsText: true);
     }
 
     private void ShowNextPage()
@@ -744,12 +746,13 @@ internal sealed class TickerForm : Form
         var secondArea = new RectangleF(area.Left, top + lineHeight, area.Width, lineHeight);
         using var previousClip = graphics.Clip.Clone();
         graphics.SetClip(area);
-        DrawTaskbarLine(graphics, firstLine, Rectangle.Round(firstArea));
-        DrawTaskbarLine(graphics, secondLine, Rectangle.Round(secondArea));
+        var textColor = GetCurrentNewsTextColor();
+        DrawTaskbarLine(graphics, firstLine, Rectangle.Round(firstArea), textColor);
+        DrawTaskbarLine(graphics, secondLine, Rectangle.Round(secondArea), textColor);
         graphics.Clip = previousClip;
     }
 
-    private void DrawTaskbarLine(Graphics graphics, string text, Rectangle area)
+    private void DrawTaskbarLine(Graphics graphics, string text, Rectangle area, Color textColor)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -761,7 +764,25 @@ internal sealed class TickerForm : Form
             | TextFormatFlags.SingleLine
             | TextFormatFlags.NoPadding
             | TextFormatFlags.NoClipping;
-        TextRenderer.DrawText(graphics, text, _taskbarFont, area, Color.White, flags);
+        TextRenderer.DrawText(graphics, text, _taskbarFont, area, textColor, flags);
+    }
+
+    private Color GetTickerTextColor()
+    {
+        return _tickerTextIsNews && _items.Any(item => item.Score > 1)
+            ? Color.Red
+            : Color.White;
+    }
+
+    private Color GetCurrentNewsTextColor()
+    {
+        if (_items.Count == 0)
+        {
+            return Color.White;
+        }
+
+        var item = _items[Math.Clamp(_currentPageIndex, 0, _items.Count - 1)];
+        return item.Score > 1 ? Color.Red : Color.White;
     }
 
     private (string FirstLine, string SecondLine) GetCurrentPageLines()
