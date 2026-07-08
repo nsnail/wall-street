@@ -1,0 +1,4 @@
+interface:
+  display_name: "WallStreet Release"
+  short_description: "Build and tag GitHub releases"
+  default_prompt: "Use $wall-street-release to build, tag, and publish a WallStreetTicker release."
