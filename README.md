@@ -15,6 +15,9 @@ dotnet run -c Release
 编辑 `appsettings.json` 后重启程序生效：
 
 - `importantScoreThreshold`: 重要程度阈值，默认 `2`
+- `newsTextColor`: 普通新闻文字颜色，默认 `#FFFFFF`，支持 `#RRGGBB` 或命名颜色
+- `importantNewsColor`: 重要新闻文字颜色，默认 `#FF0000`，支持 `#RRGGBB` 或命名颜色
+- `textOpacity`: 新闻文字透明度，`0` 到 `255`，默认 `255`
 - `refreshSeconds`: 接口刷新间隔，默认 `60`
 - `pageSeconds`: 任务栏模式翻页间隔，默认 `6`
 - `pixelsPerSecond`: 滚动速度，默认 `125`

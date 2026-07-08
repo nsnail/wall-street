@@ -21,6 +21,9 @@ internal static class Program
 internal sealed record AppConfig(
     string ApiUrl,
     int ImportantScoreThreshold,
+    string NewsTextColor,
+    string ImportantNewsColor,
+    int TextOpacity,
     int RefreshSeconds,
     int PageSeconds,
     int PixelsPerSecond,
@@ -39,6 +42,9 @@ internal sealed record AppConfig(
         var defaults = new AppConfig(
             "https://api-one-wscn.awtmt.com/apiv1/content/lives?channel=global-channel&limit=50",
             2,
+            "#FFFFFF",
+            "#FF0000",
+            255,
             60,
             6,
             125,
@@ -67,6 +73,9 @@ internal sealed record AppConfig(
             {
                 ApiUrl = ReadString(root, "apiUrl", defaults.ApiUrl),
                 ImportantScoreThreshold = ReadInt(root, "importantScoreThreshold", defaults.ImportantScoreThreshold),
+                NewsTextColor = ReadString(root, "newsTextColor", defaults.NewsTextColor),
+                ImportantNewsColor = ReadString(root, "importantNewsColor", defaults.ImportantNewsColor),
+                TextOpacity = Math.Clamp(ReadInt(root, "textOpacity", defaults.TextOpacity), 0, 255),
                 RefreshSeconds = Math.Max(15, ReadInt(root, "refreshSeconds", defaults.RefreshSeconds)),
                 PageSeconds = Math.Clamp(ReadInt(root, "pageSeconds", defaults.PageSeconds), 2, 60),
                 PixelsPerSecond = ReadSpeed(root, defaults.PixelsPerSecond),
@@ -121,12 +130,15 @@ internal sealed record AppConfig(
 internal sealed class TickerForm : Form
 {
     private static readonly Color TransparentBackColor = Color.FromArgb(1, 1, 1);
+    private const string TickerSeparator = "    |    ";
     private const int ResizeGripWidth = 24;
     private readonly AppConfig _config;
     private readonly LiveNewsClient _client;
     private readonly System.Windows.Forms.Timer _refreshTimer = new();
     private readonly System.Windows.Forms.Timer _placementTimer = new();
     private readonly System.Windows.Forms.Timer _pageTimer = new();
+    private readonly Color _newsTextColor;
+    private readonly Color _importantNewsColor;
     private readonly CancellationTokenSource _animationCancellation = new();
     private readonly NotifyIcon _notifyIcon = new();
     private readonly Font _tickerFont;
@@ -146,6 +158,7 @@ internal sealed class TickerForm : Form
     private int _dragStartWidth;
     private TaskbarDragMode _hoverMode = TaskbarDragMode.None;
     private TaskbarDragMode _dragMode = TaskbarDragMode.None;
+    private bool _isTaskbarMouseInside;
     private bool _isBottom;
     private bool _useTaskbarMode;
     private bool _isTaskbarHosted;
@@ -159,6 +172,8 @@ internal sealed class TickerForm : Form
         _taskbarLeftOffset = config.TaskbarLeftOffset;
         _taskbarRightOffset = config.TaskbarRightOffset;
         _configuredTaskbarContentWidth = config.TaskbarWidth;
+        _newsTextColor = WithAlpha(ParseColor(config.NewsTextColor, Color.White), config.TextOpacity);
+        _importantNewsColor = WithAlpha(ParseColor(config.ImportantNewsColor, Color.Red), config.TextOpacity);
         _tickerFont = CreateTickerFont(config);
         _taskbarFont = CreateFont(config.TaskbarFontFamily, config.TaskbarFontSize);
 
@@ -243,6 +258,12 @@ internal sealed class TickerForm : Form
 
         var x = CalculateTextX();
         var y = Math.Max(0, (Height - _tickerSize.Height) / 2);
+        if (_tickerTextIsNews && _items.Count > 0)
+        {
+            DrawTickerItems(e.Graphics, shadowBrush, x, y);
+            return;
+        }
+
         e.Graphics.DrawString(_tickerText, _tickerFont, shadowBrush, x + 1, y + 1);
         e.Graphics.DrawString(_tickerText, _tickerFont, textBrush, x, y);
     }
@@ -275,16 +296,7 @@ internal sealed class TickerForm : Form
         };
         MouseLeave += (_, _) =>
         {
-            if (_dragMode == TaskbarDragMode.None)
-            {
-                _hoverMode = TaskbarDragMode.None;
-                Cursor = Cursors.Default;
-            }
-
-            if (_isTaskbarHosted && _dragMode == TaskbarDragMode.None)
-            {
-                _pageTimer.Start();
-            }
+            UpdateTaskbarHoverFromCursor();
         };
     }
 
@@ -495,13 +507,13 @@ internal sealed class TickerForm : Form
         if (!_isTaskbarHosted)
         {
             Cursor = Cursors.Default;
+            _isTaskbarMouseInside = false;
             return;
         }
 
         if (_dragMode == TaskbarDragMode.None)
         {
-            _hoverMode = GetDragMode(e.X);
-            Cursor = _hoverMode == TaskbarDragMode.Move ? Cursors.SizeAll : Cursors.SizeWE;
+            UpdateTaskbarHoverFromCursor();
             return;
         }
 
@@ -546,12 +558,43 @@ internal sealed class TickerForm : Form
         _dragMode = TaskbarDragMode.None;
         Capture = false;
         _hoverMode = TaskbarDragMode.None;
-        if (_isTaskbarHosted && !ClientRectangle.Contains(PointToClient(Cursor.Position)))
-        {
-            _pageTimer.Start();
-        }
+        UpdateTaskbarHoverFromCursor();
 
         SaveTaskbarPlacement();
+    }
+
+    private void UpdateTaskbarHoverFromCursor()
+    {
+        if (!_isTaskbarHosted || _dragMode != TaskbarDragMode.None)
+        {
+            return;
+        }
+
+        var mousePosition = Cursor.Position;
+        if (!GetTaskbarWindowScreenBounds().Contains(mousePosition))
+        {
+            if (_isTaskbarMouseInside)
+            {
+                _isTaskbarMouseInside = false;
+                _hoverMode = TaskbarDragMode.None;
+                Cursor = Cursors.Default;
+                _pageTimer.Start();
+            }
+
+            return;
+        }
+
+        _isTaskbarMouseInside = true;
+        _pageTimer.Stop();
+        _hoverMode = GetDragMode(PointToClient(mousePosition).X);
+        var cursor = _hoverMode == TaskbarDragMode.Move ? Cursors.SizeAll : Cursors.SizeWE;
+        Cursor = cursor;
+        Cursor.Current = cursor;
+    }
+
+    private Rectangle GetTaskbarWindowScreenBounds()
+    {
+        return new Rectangle(PointToScreen(Point.Empty), ClientSize);
     }
 
     private TaskbarDragMode GetDragMode(int x)
@@ -619,7 +662,11 @@ internal sealed class TickerForm : Form
             {
                 if (!IsDisposed && IsHandleCreated)
                 {
-                    BeginInvoke(Invalidate);
+                    BeginInvoke(() =>
+                    {
+                        UpdateTaskbarHoverFromCursor();
+                        Invalidate();
+                    });
                 }
 
                 await Task.Delay(8, cancellationToken);
@@ -710,8 +757,31 @@ internal sealed class TickerForm : Form
 
     private static string FormatTicker(IEnumerable<LiveNewsItem> items)
     {
-        return string.Join("    |    ", items.Select(item =>
+        return string.Join(TickerSeparator, items.Select(item =>
             FormatNewsItem(item)));
+    }
+
+    private void DrawTickerItems(Graphics graphics, Brush shadowBrush, float x, float y)
+    {
+        for (var i = 0; i < _items.Count; i++)
+        {
+            var item = _items[i];
+            var text = FormatNewsItem(item);
+            DrawTickerSegment(graphics, shadowBrush, text, item.Score > 1 ? _importantNewsColor : _newsTextColor, ref x, y);
+
+            if (i < _items.Count - 1)
+            {
+                DrawTickerSegment(graphics, shadowBrush, TickerSeparator, _newsTextColor, ref x, y);
+            }
+        }
+    }
+
+    private void DrawTickerSegment(Graphics graphics, Brush shadowBrush, string text, Color textColor, ref float x, float y)
+    {
+        using var textBrush = new SolidBrush(textColor);
+        graphics.DrawString(text, _tickerFont, shadowBrush, x + 1, y + 1);
+        graphics.DrawString(text, _tickerFont, textBrush, x, y);
+        x += graphics.MeasureString(text, _tickerFont).Width;
     }
 
     private static string FormatNewsItem(LiveNewsItem item)
@@ -759,30 +829,32 @@ internal sealed class TickerForm : Form
             return;
         }
 
-        var flags = TextFormatFlags.Left
-            | TextFormatFlags.VerticalCenter
-            | TextFormatFlags.SingleLine
-            | TextFormatFlags.NoPadding
-            | TextFormatFlags.NoClipping;
-        TextRenderer.DrawText(graphics, text, _taskbarFont, area, textColor, flags);
+        using var textBrush = new SolidBrush(textColor);
+        using var format = new StringFormat(StringFormatFlags.NoWrap)
+        {
+            Alignment = StringAlignment.Near,
+            LineAlignment = StringAlignment.Center,
+            Trimming = StringTrimming.None
+        };
+        graphics.DrawString(text, _taskbarFont, textBrush, area, format);
     }
 
     private Color GetTickerTextColor()
     {
         return _tickerTextIsNews && _items.Any(item => item.Score > 1)
-            ? Color.Red
-            : Color.White;
+            ? _importantNewsColor
+            : _newsTextColor;
     }
 
     private Color GetCurrentNewsTextColor()
     {
         if (_items.Count == 0)
         {
-            return Color.White;
+            return _newsTextColor;
         }
 
         var item = _items[Math.Clamp(_currentPageIndex, 0, _items.Count - 1)];
-        return item.Score > 1 ? Color.Red : Color.White;
+        return item.Score > 1 ? _importantNewsColor : _newsTextColor;
     }
 
     private (string FirstLine, string SecondLine) GetCurrentPageLines()
@@ -823,6 +895,29 @@ internal sealed class TickerForm : Form
             ? configuredFamily
             : "Segoe UI";
         return new Font(fontFamily, size, FontStyle.Bold, GraphicsUnit.Point);
+    }
+
+    private static Color ParseColor(string configuredColor, Color fallback)
+    {
+        if (string.IsNullOrWhiteSpace(configuredColor))
+        {
+            return fallback;
+        }
+
+        try
+        {
+            var color = ColorTranslator.FromHtml(configuredColor.Trim());
+            return color.IsEmpty ? fallback : color;
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
+    private static Color WithAlpha(Color color, int alpha)
+    {
+        return Color.FromArgb(Math.Clamp(alpha, 0, 255), color.R, color.G, color.B);
     }
 }
 
