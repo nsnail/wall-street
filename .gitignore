@@ -1,0 +1,13 @@
+bin/
+obj/
+*.user
+*.suo
+*.rsuser
+.vs/
+.idea/
+*.log
+*.tmp
+*.bak
+*.nupkg
+TestResults/
+artifacts/
