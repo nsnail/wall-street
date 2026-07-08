@@ -22,7 +22,7 @@ If there is no existing tag, start from `v0.1.0` for `minor`, `v0.0.1` for `patc
 1. Check the working tree with `git status --short --branch`.
 2. If there are uncommitted changes, summarize them and commit before tagging if the user wants the current state released.
 3. Run `dotnet build -c Release`.
-4. Run `dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true`.
+4. Run `dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true`.
 5. Determine the latest tag with `git tag --list "v*" --sort=-v:refname`.
 6. Compute the next tag from the requested level.
 7. Create an annotated tag: `git tag -a <tag> -m "Release <tag>"`.

@@ -34,7 +34,7 @@ dotnet run -c Release
 ## 发布 exe
 
 ```powershell
-dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true
 ```
 
 发布结果在 `bin\Release\net10.0-windows\win-x64\publish\WallStreetTicker.exe`。
