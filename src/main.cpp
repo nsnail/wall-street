@@ -41,6 +41,8 @@ constexpr UINT kMenuExit = 1004;
 constexpr COLORREF kTransparentColor = RGB(1, 1, 1);
 
 UINT g_trayMessage = WM_APP + 1;
+class TickerApp;
+TickerApp* g_app = nullptr;
 
 enum class DragMode {
     None,
@@ -617,8 +619,7 @@ private:
                 OnDestroy();
                 return 0;
             case WM_NCHITTEST:
-                if (!isTaskbarHosted_) return HTTRANSPARENT;
-                break;
+                return HitTestWindow(lParam);
             case WM_TIMER:
                 OnTimer(static_cast<int>(wParam));
                 return 0;
@@ -637,10 +638,10 @@ private:
                 OnMouseUp();
                 return 0;
             case WM_MOUSELEAVE:
-                isTaskbarMouseInside_ = false;
-                hoverMode_ = DragMode::None;
-                SetCursor(LoadCursor(nullptr, IDC_ARROW));
-                SetTimer(hwnd_, kPageTimer, config_.pageSeconds * 1000, nullptr);
+                OnMouseLeave();
+                return 0;
+            case WM_MOUSEWHEEL:
+                OnMouseWheel(GET_WHEEL_DELTA_WPARAM(wParam));
                 return 0;
             case WM_LBUTTONDBLCLK:
                 OpenCurrentNews();
@@ -655,8 +656,11 @@ private:
     }
 
     void OnCreate() {
+        g_app = this;
         ApplyTransparency();
         CreateTrayIcon();
+        InstallMouseHook();
+        InstallKeyboardHook();
         SetTimer(hwnd_, kRefreshTimer, config_.refreshSeconds * 1000, nullptr);
         SetTimer(hwnd_, kPlacementTimer, 2000, nullptr);
         SetTimer(hwnd_, kPageTimer, config_.pageSeconds * 1000, nullptr);
@@ -673,6 +677,9 @@ private:
         KillTimer(hwnd_, kPlacementTimer);
         KillTimer(hwnd_, kPageTimer);
         KillTimer(hwnd_, kAnimationTimer);
+        UninstallMouseHook();
+        UninstallKeyboardHook();
+        if (g_app == this) g_app = nullptr;
         Shell_NotifyIconW(NIM_DELETE, &trayIcon_);
         PostQuitMessage(0);
     }
@@ -968,9 +975,80 @@ private:
     }
 
     void ShowNextPage() {
+        ShowPageOffset(1);
+    }
+
+    void ShowPageOffset(int offset) {
         if (items_.empty()) return;
-        currentPageIndex_ = (currentPageIndex_ + 1) % static_cast<int>(items_.size());
+        const int count = static_cast<int>(items_.size());
+        currentPageIndex_ = (currentPageIndex_ + offset) % count;
+        if (currentPageIndex_ < 0) currentPageIndex_ += count;
         InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    void OnMouseWheel(int delta) {
+        if (delta == 0 || items_.empty()) return;
+        ShowPageOffset(delta > 0 ? -1 : 1);
+        SetTimer(hwnd_, kPageTimer, config_.pageSeconds * 1000, nullptr);
+    }
+
+    bool HandleGlobalMouseWheel(const POINT& point, int delta) {
+        if (delta == 0 || items_.empty() || !IsPointInsideTaskbarWindow(point)) return false;
+        OnMouseWheel(delta);
+        return true;
+    }
+
+    bool HandleGlobalLeftButtonDown(const POINT& point) {
+        const DWORD now = GetTickCount();
+        const bool inside = IsPointInsideTaskbarWindow(point);
+        const bool isDoubleClick = inside &&
+            lastLeftDownInside_ &&
+            now - lastLeftDownTime_ <= GetDoubleClickTime() &&
+            std::abs(point.x - lastLeftDownPoint_.x) <= GetSystemMetrics(SM_CXDOUBLECLK) &&
+            std::abs(point.y - lastLeftDownPoint_.y) <= GetSystemMetrics(SM_CYDOUBLECLK);
+
+        lastLeftDownInside_ = inside;
+        lastLeftDownTime_ = now;
+        lastLeftDownPoint_ = point;
+
+        if (!isDoubleClick) return false;
+        lastLeftDownInside_ = false;
+        OpenCurrentNews();
+        return true;
+    }
+
+    bool HandleGlobalF1() {
+        POINT point{};
+        GetCursorPos(&point);
+        if (!IsPointInsideTaskbarWindow(point)) return false;
+        CopyCurrentNewsToClipboard();
+        ShellExecuteW(nullptr, L"open", L"https://yuanbao.tencent.com", nullptr, nullptr, SW_SHOWNORMAL);
+        return true;
+    }
+
+    std::wstring GetCurrentNewsCopyText() const {
+        if (items_.empty()) return tickerText_;
+        const auto& item = items_[std::clamp(currentPageIndex_, 0, static_cast<int>(items_.size()) - 1)];
+        return FormatNewsItem(item);
+    }
+
+    void CopyCurrentNewsToClipboard() {
+        const std::wstring text = GetCurrentNewsCopyText();
+        if (text.empty() || !OpenClipboard(hwnd_)) return;
+        EmptyClipboard();
+        const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+        HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+        if (memory) {
+            void* target = GlobalLock(memory);
+            if (target) {
+                memcpy(target, text.c_str(), bytes);
+                GlobalUnlock(memory);
+                SetClipboardData(CF_UNICODETEXT, memory);
+                memory = nullptr;
+            }
+        }
+        if (memory) GlobalFree(memory);
+        CloseClipboard();
     }
 
     void OpenCurrentNews() {
@@ -1040,12 +1118,40 @@ private:
         SaveTaskbarPlacement();
     }
 
+    LRESULT HitTestWindow(LPARAM lParam) const {
+        if (!isTaskbarHosted_) return HTTRANSPARENT;
+        POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        return IsPointInsideTaskbarWindow(point) ? HTCLIENT : HTTRANSPARENT;
+    }
+
+    void OnMouseLeave() {
+        POINT point{};
+        GetCursorPos(&point);
+        RECT bounds{};
+        GetWindowRect(hwnd_, &bounds);
+        if (isTaskbarHosted_ && PtInRect(&bounds, point)) {
+            isTaskbarMouseInside_ = true;
+            return;
+        }
+        isTaskbarMouseInside_ = false;
+        hoverMode_ = DragMode::None;
+        SetCursor(LoadCursor(nullptr, IDC_ARROW));
+        SetTimer(hwnd_, kPageTimer, config_.pageSeconds * 1000, nullptr);
+    }
+
     void TrackMouseLeave() {
         TRACKMOUSEEVENT event{};
         event.cbSize = sizeof(event);
         event.dwFlags = TME_LEAVE;
         event.hwndTrack = hwnd_;
         TrackMouseEvent(&event);
+    }
+
+    bool IsPointInsideTaskbarWindow(const POINT& point) const {
+        if (!isTaskbarHosted_) return false;
+        RECT bounds{};
+        GetWindowRect(hwnd_, &bounds);
+        return PtInRect(&bounds, point);
     }
 
     DragMode GetDragMode(int x) const {
@@ -1129,8 +1235,61 @@ private:
         file << "\n}\n";
     }
 
+    void InstallMouseHook() {
+        if (mouseHook_) return;
+        mouseHook_ = SetWindowsHookExW(WH_MOUSE_LL, LowLevelMouseProc, GetModuleHandleW(nullptr), 0);
+    }
+
+    void UninstallMouseHook() {
+        if (!mouseHook_) return;
+        UnhookWindowsHookEx(mouseHook_);
+        mouseHook_ = nullptr;
+    }
+
+    void InstallKeyboardHook() {
+        if (keyboardHook_) return;
+        keyboardHook_ = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandleW(nullptr), 0);
+    }
+
+    void UninstallKeyboardHook() {
+        if (!keyboardHook_) return;
+        UnhookWindowsHookEx(keyboardHook_);
+        keyboardHook_ = nullptr;
+    }
+
+    static LRESULT CALLBACK LowLevelMouseProc(int code, WPARAM wParam, LPARAM lParam) {
+        if (code == HC_ACTION && g_app) {
+            const auto* info = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
+            if (wParam == WM_MOUSEWHEEL) {
+                const int delta = GET_WHEEL_DELTA_WPARAM(info->mouseData);
+                if (g_app->HandleGlobalMouseWheel(info->pt, delta)) {
+                    return 1;
+                }
+            } else if (wParam == WM_LBUTTONDOWN) {
+                if (g_app->HandleGlobalLeftButtonDown(info->pt)) {
+                    return 1;
+                }
+            }
+        }
+        return CallNextHookEx(nullptr, code, wParam, lParam);
+    }
+
+    static LRESULT CALLBACK LowLevelKeyboardProc(int code, WPARAM wParam, LPARAM lParam) {
+        if (code == HC_ACTION && g_app && (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN)) {
+            const auto* info = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+            if (info->vkCode == VK_F1 && (info->flags & LLKHF_UP) == 0) {
+                if (g_app->HandleGlobalF1()) {
+                    return 1;
+                }
+            }
+        }
+        return CallNextHookEx(nullptr, code, wParam, lParam);
+    }
+
     HINSTANCE instance_{};
     HWND hwnd_{};
+    HHOOK mouseHook_{};
+    HHOOK keyboardHook_{};
     NOTIFYICONDATAW trayIcon_{};
     AppConfig config_;
     HFONT tickerFont_{};
@@ -1151,6 +1310,9 @@ private:
     int dragStartWidth_ = 0;
     DragMode hoverMode_ = DragMode::None;
     DragMode dragMode_ = DragMode::None;
+    DWORD lastLeftDownTime_ = 0;
+    POINT lastLeftDownPoint_{};
+    bool lastLeftDownInside_ = false;
     bool isTaskbarMouseInside_ = false;
     bool isBottom_ = false;
     bool useTaskbarMode_ = false;
