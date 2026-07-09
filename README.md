@@ -1,55 +1,49 @@
-# WallStreetTicker
+# WallStreetTicker C++
 
-Windows 任务栏要闻提示程序，采集 `https://wallstreetcn.com/live/global` 对应接口里的 7x24 快讯，并只显示 `score >= 2` 的重要内容。
+Windows 任务栏要闻提示程序的 C++/Win32 版本。程序采集华尔街见闻 7x24 快讯接口，只显示 `score >= importantScoreThreshold` 的重要内容。
 
-## 运行
+## 构建
+
+本项目不依赖 Qt、.NET 或第三方包，使用 Win32/GDI/WinHTTP。当前机器可直接使用 CLion 自带 MinGW：
 
 ```powershell
-dotnet run -c Release
+mingw32-make
 ```
 
-程序默认嵌入 Windows 任务栏中间区域，透明且鼠标穿透，不会影响任务栏按钮操作。任务栏模式每次显示一条要闻，并按固定间隔自动翻页；悬浮模式仍使用跑马灯滚动。右键系统托盘图标可以刷新、切换任务栏/悬浮、打开来源网页、退出。
+生成文件：
+
+```text
+build\WallStreetTicker.exe
+```
+
+运行：
+
+```powershell
+mingw32-make run
+```
+
+## 功能
+
+- 默认嵌入 Windows 任务栏中间区域，每次显示一条新闻并自动翻页。
+- 右键托盘图标可以刷新、切换任务栏/悬浮、打开来源网页、退出。
+- 任务栏模式下拖动文字区域移动位置，拖动左右边缘调整宽度，并自动保存到 `appsettings.json`。
+- 悬浮模式显示透明跑马灯，可配置在屏幕顶部或底部。
+- 双击文字打开当前新闻；无新闻时打开快讯首页。
 
 ## 配置
 
-编辑 `appsettings.json` 后重启程序生效：
+编辑 exe 同目录的 `appsettings.json` 后重启生效：
 
+- `apiUrl`: 快讯接口地址
 - `importantScoreThreshold`: 重要程度阈值，默认 `2`
-- `newsTextColor`: 普通新闻文字颜色，默认 `#FFFFFF`，支持 `#RRGGBB` 或命名颜色
-- `importantNewsColor`: 重要新闻文字颜色，默认 `#FF0000`，支持 `#RRGGBB` 或命名颜色
-- `textOpacity`: 新闻文字透明度，`0` 到 `255`，默认 `255`
-- `refreshSeconds`: 接口刷新间隔，默认 `60`
-- `pageSeconds`: 任务栏模式翻页间隔，默认 `6`
-- `pixelsPerSecond`: 滚动速度，默认 `125`
-- `barHeight`: 横条高度，默认 `40`
+- `newsTextColor`: 普通新闻文字颜色，默认 `#FFFFFF`
+- `importantNewsColor`: 重要新闻文字颜色，默认 `#FF0000`
+- `textOpacity`: 新闻文字透明度，`0` 到 `255`
+- `refreshSeconds`: 接口刷新间隔，最低 `15`
+- `pageSeconds`: 任务栏模式翻页间隔，`2` 到 `60`
+- `pixelsPerSecond`: 悬浮跑马灯速度，`30` 到 `600`
+- `barHeight`: 横条高度，`24` 到 `120`
 - `position`: `taskbar`、`top` 或 `bottom`
-- `taskbarLeftOffset`: 任务栏左侧预留宽度，默认 `360`
-- `taskbarRightOffset`: 任务栏右侧预留宽度，默认 `240`
-- `taskbarWidth`: 任务栏新闻区域宽度，大于 `0` 时优先使用
-- `taskbarFontFamily` / `taskbarFontSize`: 任务栏字体配置，默认 9 号白字
+- `taskbarLeftOffset` / `taskbarRightOffset` / `taskbarWidth`: 任务栏区域位置和宽度
+- `taskbarFontFamily` / `taskbarFontSize`: 任务栏字体配置
 - `fontFamily` / `fontSize`: 悬浮跑马灯字体配置
-
-任务栏模式下可用鼠标调整位置：拖动文字区域移动整体位置，拖动左右边缘调整宽度；拖到右侧空间不足时会自动收窄宽度。
-
-## 发布 exe
-
-```powershell
-dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:EnableCompressionInSingleFile=true
-```
-
-发布结果在 `bin\Release\net10.0-windows\win-x64\publish\WallStreetTicker.exe`。
-
-## GitHub Actions 发版
-
-推送 `v*` 标签会自动构建 Windows x64 自包含单文件 exe，并创建 GitHub Release：
-
-```powershell
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-也可以在 GitHub Actions 页面手动运行 `Build and Release` workflow，下载构建 artifact。
-
-## License
-
-MIT
